@@ -1,0 +1,62 @@
+# =============================================================================
+# REPO: capture-logs-actions
+# ARCHIVO: xray-parse/action.yml
+#
+# PROPOSITO:
+#   Parsea el output de Xray y construye el captured_logs.json con el
+#   mismo esquema de annotations que usa build-captured-logs.
+# =============================================================================
+
+name: Xray Parse and Build captured_logs
+description: Parsea output de Xray y genera captured_logs.json con annotations
+
+inputs:
+  xray_log:    { required: true,  description: "Path al log raw de xray" }
+  job_name:    { required: true,  description: "Nombre del job" }
+  app_name:    { required: true,  description: "Nombre de la aplicación" }
+  environment: { required: true,  description: "Ambiente" }
+  run_id:      { required: true,  description: "ID del run" }
+  output:      { required: true,  description: "Path de salida del captured_logs.json" }
+
+outputs:
+  has_vulnerabilities:
+    description: "true si hay vulnerabilidades HIGH o CRITICAL"
+    value: ${{ steps.check-vulns.outputs.has_vulnerabilities }}
+
+runs:
+  using: composite
+  steps:
+    - name: Parse Xray log
+      shell: bash
+      run: |
+        mkdir -p artifacts
+        python "${{ github.action_path }}/scripts/xray_parser.py" \
+          --input  "${{ inputs.xray_log }}" \
+          --output "artifacts/xray_structured.json"
+
+    - name: Build captured_logs.json (xray)
+      shell: bash
+      run: |
+        python "${{ github.action_path }}/scripts/build_captured_logs.py" \
+          --job    "${{ inputs.job_name }}" \
+          --app    "${{ inputs.app_name }}" \
+          --env    "${{ inputs.environment }}" \
+          --run-id "${{ inputs.run_id }}" \
+          --xray   "artifacts/xray_structured.json" \
+          --output "${{ inputs.output }}"
+
+    - name: Check vulnerabilities
+      id: check-vulns
+      shell: bash
+      run: |
+        HAS_VULN=$(python -c "
+        import json
+        data = json.load(open('${{ inputs.output }}'))
+        has_fail = any(
+          a['severity'] == 'failure'
+          for step in data.get('steps', [])
+          for a in step.get('annotations', [])
+        )
+        print('true' if has_fail else 'false')
+        ")
+        echo "has_vulnerabilities=$HAS_VULN" >> $GITHUB_OUTPUT

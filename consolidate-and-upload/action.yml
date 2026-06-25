@@ -1,0 +1,126 @@
+# =============================================================================
+# REPO: capture-logs-actions
+# ARCHIVO: consolidate-and-upload/action.yml
+#
+# PROPOSITO:
+#   Consolida todos los captured_logs.json descargados de los jobs anteriores
+#   en un único final_logs.json, lo valida y lo sube a ADLS Gen2.
+#   El upload es CONDICIONAL — si adls_account está vacío, se omite sin fallar.
+# =============================================================================
+
+name: Consolidate Logs and Upload to ADLS
+description: Consolida captured_logs.json de múltiples jobs y sube a Azure Data Lake
+
+inputs:
+  downloaded_path:    { required: true,  description: "Directorio con los artefactos descargados" }
+  app_name:           { required: true,  description: "Nombre de la aplicación" }
+  environment:        { required: true,  description: "Ambiente" }
+  run_id:             { required: true,  description: "ID del run" }
+  output:             { required: true,  description: "Path de salida del final_logs.json" }
+  adls_account:       { required: false, description: "Storage account de ADLS Gen2" }
+  azure_client_id:    { required: false, description: "Client ID del Service Principal" }
+  azure_client_secret:{ required: false, description: "Secret del Service Principal" }
+  azure_tenant_id:    { required: false, description: "Tenant ID de Azure AD" }
+  adls_container:     { required: false, default: "lhcltools" }
+  adls_base_path:     { required: false, default: "desa/bcp/lht/tntd/log" }
+
+runs:
+  using: composite
+  steps:
+    # Descubrir todos los captured_logs.json descargados
+    - name: Discover captured_logs files
+      id: discover
+      shell: bash
+      run: |
+        echo "=== Archivos descargados ==="
+        find "${{ inputs.downloaded_path }}" -type f -name "*.json" | sort
+
+        FILES=$(find "${{ inputs.downloaded_path }}" -type f -name "captured_logs.json" | sort)
+        if [ -z "$FILES" ]; then
+          echo "::error::No se encontraron archivos captured_logs.json en ${{ inputs.downloaded_path }}"
+          exit 1
+        fi
+        echo "$FILES" > /tmp/log_files.txt
+        echo "Archivos a consolidar: $(echo "$FILES" | wc -l)"
+
+    # Consolidar
+    - name: Consolidate into final_logs.json
+      shell: bash
+      run: |
+        mkdir -p "$(dirname "${{ inputs.output }}")"
+        python "${{ github.action_path }}/scripts/consolidate_logs.py" \
+          --files-list /tmp/log_files.txt \
+          --output     "${{ inputs.output }}" \
+          --run-id     "${{ inputs.run_id }}" \
+          --app        "${{ inputs.app_name }}" \
+          --env        "${{ inputs.environment }}"
+
+        FILE_SIZE=$(stat -c%s "${{ inputs.output }}")
+        echo "Tamaño final_logs.json: $FILE_SIZE bytes"
+        if [ "$FILE_SIZE" -lt 10 ]; then
+          echo "::error::final_logs.json está vacío ($FILE_SIZE bytes)"
+          exit 1
+        fi
+
+    # Validar
+    - name: Validate final_logs.json
+      shell: bash
+      run: |
+        python "${{ github.action_path }}/scripts/validate_final_logs.py" \
+          --input "${{ inputs.output }}"
+
+        echo "### Consolidated Logs — ${{ inputs.app_name }}" >> $GITHUB_STEP_SUMMARY
+        python "${{ github.action_path }}/scripts/summary_report.py" \
+          "${{ inputs.output }}" >> $GITHUB_STEP_SUMMARY
+
+    # Verificar si ADLS está configurado
+    - name: Check ADLS availability
+      id: check-adls
+      shell: bash
+      run: |
+        if [[ -n "${{ inputs.adls_account }}" ]]; then
+          echo "available=true" >> $GITHUB_OUTPUT
+          echo "::notice::ADLS configurado — se subirá final_logs.json"
+        else
+          echo "available=false" >> $GITHUB_OUTPUT
+          echo "::notice::ADLS no configurado — descarga el artefacto final-consolidated-logs desde GitHub Actions"
+          echo "### Upload ADLS" >> $GITHUB_STEP_SUMMARY
+          echo "> ADLS no configurado. Descarga el artefacto \`final-consolidated-logs\` desde la pestaña Summary." >> $GITHUB_STEP_SUMMARY
+        fi
+
+    # Login Azure (solo si ADLS configurado)
+    - name: Login to Azure
+      if: steps.check-adls.outputs.available == 'true'
+      shell: bash
+      run: |
+        az login \
+          --service-principal \
+          --username "${{ inputs.azure_client_id }}" \
+          --password "${{ inputs.azure_client_secret }}" \
+          --tenant   "${{ inputs.azure_tenant_id }}"
+
+    # Upload a ADLS (solo si ADLS configurado)
+    - name: Upload to Azure Data Lake Gen2
+      if: steps.check-adls.outputs.available == 'true'
+      shell: bash
+      run: |
+        DATE_STR=$(date +'%Y-%m-%d')
+        ADLS_PATH="${{ inputs.adls_base_path }}/app=${{ inputs.app_name }}/env=${{ inputs.environment }}/date=${DATE_STR}/run_id=${{ inputs.run_id }}.json"
+
+        az storage fs file upload \
+          --account-name "${{ inputs.adls_account }}" \
+          --file-system  "${{ inputs.adls_container }}" \
+          --path         "$ADLS_PATH" \
+          --source       "${{ inputs.output }}" \
+          --auth-mode    login \
+          --overwrite    true
+
+        echo "::notice::Upload exitoso → $ADLS_PATH"
+        echo "### Upload ADLS" >> $GITHUB_STEP_SUMMARY
+        echo "Subido a: \`$ADLS_PATH\`" >> $GITHUB_STEP_SUMMARY
+
+    # Logout (solo si hicimos login)
+    - name: Azure Logout
+      if: steps.check-adls.outputs.available == 'true'
+      shell: bash
+      run: az logout || true

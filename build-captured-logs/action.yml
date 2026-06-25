@@ -1,0 +1,66 @@
+# =============================================================================
+# REPO: capture-logs-actions
+# ARCHIVO: build-captured-logs/action.yml
+#
+# PROPOSITO:
+#   Construye el captured_logs.json con el esquema de annotations.
+#   Acepta múltiples fuentes (analyzer, logger, pyspark) y las consolida
+#   en el esquema homogéneo que luego usa consolidate-and-upload.
+# =============================================================================
+
+name: Build captured_logs.json
+description: Construye captured_logs.json con annotations de analyzer, logger y pyspark
+
+inputs:
+  job_name:             { required: true,  description: "Nombre del job (qa-prepare, etc.)" }
+  app_name:             { required: true,  description: "Nombre de la aplicación" }
+  environment:          { required: true,  description: "Ambiente (desa/qa/prod)" }
+  run_id:               { required: true,  description: "ID del run" }
+  output:               { required: true,  description: "Path de salida del captured_logs.json" }
+  analyzer_structured:  { required: false, description: "Path al analyzer_structured.json" }
+  logger_log:           { required: false, description: "Path al logger_raw.log" }
+  pyspark_log:          { required: false, description: "Path al pyspark_raw.log" }
+
+outputs:
+  has_failures:
+    description: "true si el JSON contiene annotations de severidad failure"
+    value: ${{ steps.check-failures.outputs.has_failures }}
+
+runs:
+  using: composite
+  steps:
+    - name: Build captured_logs.json
+      shell: bash
+      run: |
+        python "${{ github.action_path }}/scripts/build_captured_logs.py" \
+          --job     "${{ inputs.job_name }}" \
+          --app     "${{ inputs.app_name }}" \
+          --env     "${{ inputs.environment }}" \
+          --run-id  "${{ inputs.run_id }}" \
+          --output  "${{ inputs.output }}" \
+          $( [[ -n "${{ inputs.analyzer_structured }}" ]] && echo "--analyzer ${{ inputs.analyzer_structured }}" ) \
+          $( [[ -n "${{ inputs.logger_log }}" ]]          && echo "--logger ${{ inputs.logger_log }}" ) \
+          $( [[ -n "${{ inputs.pyspark_log }}" ]]         && echo "--pyspark ${{ inputs.pyspark_log }}" )
+
+    - name: Check failures in output
+      id: check-failures
+      shell: bash
+      run: |
+        HAS_FAILURES=$(python -c "
+        import json
+        data = json.load(open('${{ inputs.output }}'))
+        has_fail = any(
+          a['severity'] == 'failure'
+          for step in data.get('steps', [])
+          for a in step.get('annotations', [])
+        )
+        print('true' if has_fail else 'false')
+        ")
+        echo "has_failures=$HAS_FAILURES" >> $GITHUB_OUTPUT
+
+    - name: Summary report
+      shell: bash
+      run: |
+        echo "### QA Prepare Results (${{ inputs.app_name }})" >> $GITHUB_STEP_SUMMARY
+        python "${{ github.action_path }}/scripts/summary_report.py" \
+          "${{ inputs.output }}" >> $GITHUB_STEP_SUMMARY
