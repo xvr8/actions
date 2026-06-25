@@ -1,53 +1,26 @@
-# =============================================================================
-# REPO: capture-logs-actions
-# ARCHIVO: analyzer-clean/action.yml
-#
-# PROPOSITO:
-#   Composite action que limpia el output raw del analyzer y lo parsea
-#   a JSON estructurado. Es reutilizable: cualquier proyecto con un
-#   analyzer que siga el formato "VISTA POR CATEGORIAS" puede usar esta acción.
-#
-# COMO SE USA (en un workflow):
-#   - name: Clean and Parse Analyzer Output
-#     uses: xvr8/capture-logs-actions/analyzer-clean@main
-#     with:
-#       input_file: logs/analyzer_raw.log
-#       output_clean: logs/analyzer_clean.log
-#       output_structured: artifacts/analyzer_structured.json
-#       pattern: "VISTA POR CATEGORIAS"
-#
-# github.action_path:
-#   Apunta al directorio analyzer-clean/ DENTRO del repo capture-logs-actions.
-#   Los scripts en scripts/ se ejecutan desde ahí, no desde el repo del proyecto.
-# =============================================================================
-
 name: Analyzer Clean and Parse
 description: Extrae sección relevante del log del analyzer y la parsea a JSON estructurado
 
 inputs:
   input_file:
-    description: "Path al log raw del analyzer (relativo al workspace)"
     required: true
+    description: "Path al log raw del analyzer"
   output_clean:
-    description: "Path de salida del log limpio"
     required: true
     default: "logs/analyzer_clean.log"
+    description: "Path de salida del log limpio"
   output_structured:
-    description: "Path de salida del JSON estructurado"
     required: true
     default: "artifacts/analyzer_structured.json"
+    description: "Path de salida del JSON estructurado"
   pattern:
-    description: "Patrón que marca el inicio de la sección relevante"
     required: false
     default: "VISTA POR CATEGORIAS"
+    description: "Patrón que marca el inicio de la sección relevante"
 
 runs:
   using: composite
   steps:
-    - name: Install Python dependencies
-      shell: bash
-      run: pip install -q --no-input 2>/dev/null || true
-
     - name: Clean analyzer output
       shell: bash
       run: |

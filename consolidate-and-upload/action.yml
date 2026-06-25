@@ -1,33 +1,46 @@
-# =============================================================================
-# REPO: capture-logs-actions
-# ARCHIVO: consolidate-and-upload/action.yml
-#
-# PROPOSITO:
-#   Consolida todos los captured_logs.json descargados de los jobs anteriores
-#   en un único final_logs.json, lo valida y lo sube a ADLS Gen2.
-#   El upload es CONDICIONAL — si adls_account está vacío, se omite sin fallar.
-# =============================================================================
-
 name: Consolidate Logs and Upload to ADLS
 description: Consolida captured_logs.json de múltiples jobs y sube a Azure Data Lake
 
 inputs:
-  downloaded_path:    { required: true,  description: "Directorio con los artefactos descargados" }
-  app_name:           { required: true,  description: "Nombre de la aplicación" }
-  environment:        { required: true,  description: "Ambiente" }
-  run_id:             { required: true,  description: "ID del run" }
-  output:             { required: true,  description: "Path de salida del final_logs.json" }
-  adls_account:       { required: false, description: "Storage account de ADLS Gen2" }
-  azure_client_id:    { required: false, description: "Client ID del Service Principal" }
-  azure_client_secret:{ required: false, description: "Secret del Service Principal" }
-  azure_tenant_id:    { required: false, description: "Tenant ID de Azure AD" }
-  adls_container:     { required: false, default: "lhcltools" }
-  adls_base_path:     { required: false, default: "desa/bcp/lht/tntd/log" }
+  downloaded_path:
+    required: true
+    description: "Directorio con los artefactos descargados"
+  app_name:
+    required: true
+    description: "Nombre de la aplicación"
+  environment:
+    required: true
+    description: "Ambiente"
+  run_id:
+    required: true
+    description: "ID del run"
+  output:
+    required: true
+    description: "Path de salida del final_logs.json"
+  adls_account:
+    required: false
+    description: "Storage account de ADLS Gen2"
+  azure_client_id:
+    required: false
+    description: "Client ID del Service Principal"
+  azure_client_secret:
+    required: false
+    description: "Secret del Service Principal"
+  azure_tenant_id:
+    required: false
+    description: "Tenant ID de Azure AD"
+  adls_container:
+    required: false
+    default: "lhcltools"
+    description: "Container en ADLS"
+  adls_base_path:
+    required: false
+    default: "desa/bcp/lht/tntd/log"
+    description: "Path base en ADLS"
 
 runs:
   using: composite
   steps:
-    # Descubrir todos los captured_logs.json descargados
     - name: Discover captured_logs files
       id: discover
       shell: bash
@@ -43,7 +56,6 @@ runs:
         echo "$FILES" > /tmp/log_files.txt
         echo "Archivos a consolidar: $(echo "$FILES" | wc -l)"
 
-    # Consolidar
     - name: Consolidate into final_logs.json
       shell: bash
       run: |
@@ -62,7 +74,6 @@ runs:
           exit 1
         fi
 
-    # Validar
     - name: Validate final_logs.json
       shell: bash
       run: |
@@ -73,7 +84,6 @@ runs:
         python "${{ github.action_path }}/scripts/summary_report.py" \
           "${{ inputs.output }}" >> $GITHUB_STEP_SUMMARY
 
-    # Verificar si ADLS está configurado
     - name: Check ADLS availability
       id: check-adls
       shell: bash
@@ -88,7 +98,6 @@ runs:
           echo "> ADLS no configurado. Descarga el artefacto \`final-consolidated-logs\` desde la pestaña Summary." >> $GITHUB_STEP_SUMMARY
         fi
 
-    # Login Azure (solo si ADLS configurado)
     - name: Login to Azure
       if: steps.check-adls.outputs.available == 'true'
       shell: bash
@@ -99,7 +108,6 @@ runs:
           --password "${{ inputs.azure_client_secret }}" \
           --tenant   "${{ inputs.azure_tenant_id }}"
 
-    # Upload a ADLS (solo si ADLS configurado)
     - name: Upload to Azure Data Lake Gen2
       if: steps.check-adls.outputs.available == 'true'
       shell: bash
@@ -119,7 +127,6 @@ runs:
         echo "### Upload ADLS" >> $GITHUB_STEP_SUMMARY
         echo "Subido a: \`$ADLS_PATH\`" >> $GITHUB_STEP_SUMMARY
 
-    # Logout (solo si hicimos login)
     - name: Azure Logout
       if: steps.check-adls.outputs.available == 'true'
       shell: bash
