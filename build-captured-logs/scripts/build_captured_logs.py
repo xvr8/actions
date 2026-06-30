@@ -193,10 +193,29 @@ def parse_analyzer_structured(analyzer_path: Path) -> dict:
         "warning" if summary["warning"] > 0 else "success"
     )
 
+    # Construir categories_view: expone la tabla jerárquica categoría→reglas
+    # sin los campos de ruido (raw_line, line_number, severity técnico).
+    categories_view = []
+    for category in structured.get("categories", []):
+        cat_rules = []
+        for rule in category.get("rules", []):
+            cat_rules.append({
+                "rule_id":     rule.get("rule_id", ""),
+                "result":      rule.get("result", ""),
+                "description": rule.get("description", ""),
+                "detail":      rule.get("detail", ""),
+            })
+        categories_view.append({
+            "name":    category.get("name", ""),
+            "summary": category.get("summary", {}),
+            "rules":   cat_rules,
+        })
+
     return {
         "name": "analyzer",
         "status": status,
         "source": "analyzer",
+        "categories_view": categories_view,
         "annotations": annotations,
         "summary": summary,
         "analyzer_total": structured.get("total_summary", {}),

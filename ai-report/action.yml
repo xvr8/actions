@@ -1,0 +1,63 @@
+name: Generate AI Report
+description: >
+  Genera ai_report.json optimizado para consumo por IA desde final_logs.json.
+  Expone solo la vista por categorías del analyzer y las vulnerabilidades de Xray.
+
+inputs:
+  final_logs_path:
+    required: true
+    description: "Path al final_logs.json consolidado"
+  output:
+    required: true
+    default: "artifacts/ai_report.json"
+    description: "Path de salida del ai_report.json"
+
+runs:
+  using: composite
+  steps:
+    - name: Generate AI Report
+      shell: bash
+      run: |
+        python "${{ github.action_path }}/scripts/generate_ai_report.py" \
+          --input  "${{ inputs.final_logs_path }}" \
+          --output "${{ inputs.output }}"
+
+    - name: Validate AI Report
+      shell: bash
+      run: |
+        python -c "
+        import json
+        data = json.load(open('${{ inputs.output }}'))
+        cats  = len(data['analyzer']['categories'])
+        vulns = len(data['vulnerabilities'])
+        print(f'OK: {cats} categorias, {vulns} vulnerabilidades')
+        "
+        echo "::notice::ai_report.json validado OK"
+
+    - name: Summary Report
+      shell: bash
+      run: |
+        python -c "
+        import json
+        data  = json.load(open('${{ inputs.output }}'))
+        gs    = data['global_summary']
+        cats  = data['analyzer']['categories']
+        vulns = data['vulnerabilities']
+        tot   = data['analyzer'].get('total_summary', {})
+        print('### AI Report — ' + data['app'])
+        print(f'**Status:** {data[\"overall_status\"].upper()}  |  FAILURE: {gs[\"failure\"]}  WARNING: {gs[\"warning\"]}  NOTICE: {gs[\"notice\"]}')
+        print()
+        print('#### Vista por Categorías')
+        print(f'PASS={tot.get(\"pass\",0)}  FAIL={tot.get(\"fail\",0)}  WARN={tot.get(\"warn\",0)}')
+        print()
+        print('| Categoría | PASS | FAIL | WARN |')
+        print('|-----------|------|------|------|')
+        for cat in cats:
+            s = cat['summary']
+            print(f'| {cat[\"name\"]} | {s[\"pass\"]} | {s[\"fail\"]} | {s[\"warn\"]} |')
+        if vulns:
+            print()
+            print(f'#### Vulnerabilidades: {len(vulns)} encontradas')
+            for v in vulns:
+                print(f'- [{v[\"severity\"]}] {v[\"cve\"]} — {v[\"package\"]}')
+        " >> $GITHUB_STEP_SUMMARY
